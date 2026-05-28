@@ -606,6 +606,16 @@ function App() {
         <CriteriaModal
           defaultCriteria={EVALUATION_SYSTEM_PROMPT}
           customCriteria={currentPersona?.judgingCriteria || ''}
+          onSave={(text) => {
+            if (!currentPersona) return
+            setPersonas((list) =>
+              list.map((p) =>
+                p.id === currentPersona.id
+                  ? { ...p, judgingCriteria: text, updatedAt: Date.now() }
+                  : p
+              )
+            )
+          }}
           onClose={() => setShowCriteriaModal(false)}
         />
       )}
@@ -1217,12 +1227,42 @@ function FeedbackPanel({
 function CriteriaModal({
   defaultCriteria,
   customCriteria,
+  onSave,
   onClose,
 }: {
   defaultCriteria: string
   customCriteria: string
+  onSave: (text: string) => void
   onClose: () => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(customCriteria)
+  const [saved, setSaved] = useState(false)
+
+  const startEdit = () => {
+    setDraft(customCriteria)
+    setEditing(true)
+    setSaved(false)
+  }
+  const cancelEdit = () => {
+    setEditing(false)
+    setDraft(customCriteria)
+  }
+  const saveEdit = () => {
+    onSave(draft.trim())
+    setEditing(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+  const clearAll = () => {
+    if (!confirm('确定清空当前自定义评判准则？\n清空后下次评估只用系统默认标准。')) return
+    onSave('')
+    setEditing(false)
+    setDraft('')
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal criteria-modal" onClick={(e) => e.stopPropagation()}>
@@ -1232,18 +1272,51 @@ function CriteriaModal({
             <h4>📦 默认评估标准（系统内置）</h4>
             <pre className="criteria-pre">{defaultCriteria}</pre>
           </section>
-          {customCriteria && (
-            <section className="criteria-section custom">
-              <h4>🎯 自定义评判准则（由人工反馈迭代生成）</h4>
+          <section className="criteria-section custom">
+            <div className="criteria-head">
+              <h4>🎯 自定义评判准则（人工可编辑，每次评估时附加给 AI）</h4>
+              <div className="criteria-actions">
+                {!editing ? (
+                  <>
+                    <button className="btn-ghost-sm" onClick={startEdit}>
+                      ✏️ {customCriteria ? '编辑' : '手动添加'}
+                    </button>
+                    {customCriteria && (
+                      <button className="btn-ghost-sm danger" onClick={clearAll}>
+                        🗑️ 清空
+                      </button>
+                    )}
+                    {saved && <span className="saved-tip">✅ 已保存</span>}
+                  </>
+                ) : (
+                  <>
+                    <button className="btn-primary" onClick={saveEdit}>保存</button>
+                    <button className="btn-ghost-sm" onClick={cancelEdit}>取消</button>
+                  </>
+                )}
+              </div>
+            </div>
+            {editing ? (
+              <textarea
+                className="criteria-edit-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={12}
+                placeholder="在此填写自定义评判准则，每条一行，例如：&#10;• 模型不得自称 AI 助手或承认人格设定\n• 回复应当包含场景所需的核心信息\n• 语气与人格设定保持一致，避免做作"
+              />
+            ) : customCriteria ? (
               <pre className="criteria-pre custom-criteria-pre">{customCriteria}</pre>
-            </section>
-          )}
-          {!customCriteria && (
-            <section className="criteria-section">
-              <h4>🎯 自定义评判准则</h4>
-              <div className="criteria-empty">尚未建立。完成评估后在“人工评判”面板提交反馈，即可自动生成。</div>
-            </section>
-          )}
+            ) : (
+              <div className="criteria-empty">
+                尚未建立。可点「✏️ 手动添加」直接维护，或在「人工评判」面板提交反馈让 AI 自动生成。
+              </div>
+            )}
+            {!editing && customCriteria && (
+              <p className="criteria-tip">
+                💡 提示：AI 自动生成的准则可能在多次反馈后被改写。如需锁定关键规则，建议改为人工维护。
+              </p>
+            )}
+          </section>
         </div>
         <div className="modal-actions">
           <button className="btn-ghost" onClick={onClose}>关闭</button>
