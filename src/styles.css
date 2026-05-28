@@ -330,6 +330,120 @@ body {
   min-height: 200px;
 }
 
+/* ========== Persona Modal 专属 ========== */
+.persona-modal {
+  max-width: 720px;
+}
+
+.persona-modal .label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.persona-modal .label-row label {
+  margin-bottom: 0;
+}
+
+.gen-error {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+.gen-rules-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gen-rules-tip b { color: #2563eb; font-weight: 600; }
+.gen-rules-tip .btn-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  text-decoration: underline;
+}
+.updating-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+/* ========== Gen Rules 列表 ========== */
+.rule-count {
+  display: inline-block;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+}
+.rule-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rule-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.rule-item .rule-text {
+  flex: 1;
+  line-height: 1.6;
+  font-size: 13px;
+  color: #111827;
+  word-break: break-word;
+}
+.rule-item .rule-edit-input {
+  flex: 1;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  font-size: 13px;
+  resize: vertical;
+  font-family: inherit;
+}
+.rule-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.btn-ghost-sm {
+  padding: 4px 10px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #374151;
+}
+.btn-ghost-sm:hover { background: #f3f4f6; }
+.btn-ghost-sm.danger { color: #dc2626; }
+.btn-ghost-sm.danger:hover { background: #fef2f2; border-color: #fca5a5; }
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -938,4 +1052,234 @@ select:focus {
   font-size: 13px;
   font-style: italic;
   color: #14532d;
+}
+
+/* ========== Criteria Card ========== */
+.criteria-card {
+  border-left: 3px solid var(--primary);
+}
+
+.criteria-content {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+  background: var(--code-bg);
+  padding: 12px 14px;
+  border-radius: 6px;
+  margin: 0;
+}
+
+.criteria-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  font-style: italic;
+}
+
+/* ========== Feedback Panel ========== */
+.feedback-panel {
+  border-left: 3px solid var(--warn);
+}
+
+.feedback-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.feedback-dimensions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-dimension-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feedback-dim-name {
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 80px;
+}
+
+.feedback-ai-rating {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 50px;
+}
+
+.feedback-arrow {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.feedback-human-rating {
+  display: flex;
+  gap: 4px;
+}
+
+.rating-toggle {
+  padding: 2px 6px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.rating-toggle:hover {
+  background: #f0f0f0;
+}
+
+.rating-toggle.active {
+  border-color: var(--primary);
+  background: rgba(255, 90, 31, 0.08);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.feedback-reason {
+  flex: 1;
+  min-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.feedback-reason:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.feedback-comment {
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.feedback-comment:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.feedback-success {
+  font-size: 13px;
+  color: var(--success);
+  font-weight: 500;
+}
+
+.feedback-error {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* ========== Eval Actions ========== */
+.eval-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.right-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+/* ========== Result Toolbar ========== */
+.result-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.result-toolbar .btn-ghost.recorded {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+/* ========== Analysis Section (合并卡片内部分块) ========== */
+.analysis-section {
+  padding: 14px 0;
+  border-top: 1px dashed var(--border);
+}
+
+.analysis-section:first-of-type {
+  border-top: none;
+  padding-top: 8px;
+}
+
+.analysis-section .sub-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+/* ========== Criteria Modal ========== */
+.criteria-modal {
+  max-width: 720px;
+  width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.criteria-modal-body {
+  padding: 0 4px;
+}
+
+.criteria-section {
+  margin-bottom: 24px;
+}
+
+.criteria-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.criteria-section.custom h3 {
+  color: var(--primary);
+}
+
+.criteria-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--code-bg);
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.custom-criteria-pre {
+  background: #fff7ed;
+  border-color: #fed7aa;
 }

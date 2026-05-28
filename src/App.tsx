@@ -1,13 +1,16 @@
 import { useState, useEffect, useMemo } from 'react'
 import { SCENARIOS, CATEGORIES, type Scenario } from './scenarios'
-import { evaluatePrompt, type EvaluationResult, type LLMConfig } from './api'
+import { evaluatePrompt, updateJudgingCriteria, generatePersonaPrompt, extractOneRule, EVALUATION_SYSTEM_PROMPT, type EvaluationResult, type LLMConfig, type HumanFeedbackInput } from './api'
 import {
   type Persona,
   type Evaluation,
+  type HumanFeedback,
   loadPersonas,
   savePersonas,
   loadCurrentPersonaId,
   saveCurrentPersonaId,
+  loadGenRules,
+  saveGenRules,
   genId,
   formatTime,
 } from './storage'
@@ -50,6 +53,13 @@ function App() {
   const [result, setResult] = useState<EvaluationResult | null>(null)
   const [copiedId, setCopiedId] = useState('')
   const [viewingEval, setViewingEval] = useState<Evaluation | null>(null)
+  const [showCriteriaModal, setShowCriteriaModal] = useState(false)
+
+  // ------ 全局生成人格额外规则 ------
+  const [genRules, setGenRules] = useState<string[]>([])
+  const [showGenRulesModal, setShowGenRulesModal] = useState(false)
+  const [genRulesUpdating, setGenRulesUpdating] = useState(false)
+  const [recordedFlash, setRecordedFlash] = useState(false)
 
   // 初始化
   useEffect(() => {
@@ -73,6 +83,8 @@ function App() {
     } else {
       setCurrentPersonaId(list[0].id)
     }
+
+    setGenRules(loadGenRules())
   }, [])
 
   // 持久化
@@ -83,6 +95,10 @@ function App() {
   useEffect(() => {
     saveCurrentPersonaId(currentPersonaId)
   }, [currentPersonaId])
+
+  useEffect(() => {
+    saveGenRules(genRules)
+  }, [genRules])
 
   useEffect(() => {
     localStorage.setItem(CONFIG_KEY, JSON.stringify({ config, providerIdx }))
@@ -155,6 +171,7 @@ function App() {
         id: genId(),
         name: trimmedName,
         prompt: trimmedPrompt,
+        judgingCriteria: '',
         createdAt: Date.now(),
         updatedAt: Date.now(),
         evaluations: [],
@@ -198,7 +215,8 @@ function App() {
         currentPersona.prompt,
         scenarioContext,
         modelOutput,
-        extraNotes
+        extraNotes,
+        currentPersona.judgingCriteria
       )
       setResult(r)
       // 保存到当前人格的评估记录
@@ -250,6 +268,119 @@ function App() {
 
   const fillScenarioToOutput = () => {
     if (currentScenario) setModelOutput(currentScenario.originalText)
+  }
+
+  // 把 AI 评估结果中的问题点拼为反馈总结
+  const buildAiFeedbackSummary = (
+    r: EvaluationResult,
+    personaLabel: string,
+    scenarioLabel: string
+  ): string => {
+    const badDims = r.dimensions.filter((d) => d.rating !== '✅')
+    const lines: string[] = []
+    lines.push(`【反馈来源】AI 自动评估（人格：${personaLabel}、场景：${scenarioLabel}）`)
+    lines.push(`【总体判定】${r.verdict}（${r.overallScore} 分）：${r.verdictReason}`)
+    if (badDims.length) {
+      lines.push('【问题维度】')
+      badDims.forEach((d) => lines.push(`- ${d.rating} ${d.name}：${d.comment}`))
+    }
+    if (r.coreIssues.length) {
+      lines.push('【核心问题】')
+      r.coreIssues.forEach((s) => lines.push(`- ${s}`))
+    }
+    if (r.suggestions.length) {
+      lines.push('【改进建议】')
+      r.suggestions.forEach((s) => lines.push(`- ${s}`))
+    }
+    return lines.join('\n')
+  }
+
+  // 手动记录当前评估到生成规则（用户点击「📥 记录到生成规则」按钮触发）
+  const handleRecordToRules = async (): Promise<void> => {
+    if (!currentPersona) return
+    if (!result) return
+    if (!config.apiKey?.trim()) {
+      alert('请先在「⚙️ 设置」中填入 API Key')
+      return
+    }
+
+    const personaLabel = currentPersona.name
+    const scenarioLabel =
+      viewingEval?.scenarioName ||
+      currentScenario?.name ||
+      customScenario.slice(0, 20) ||
+      '(未命名场景)'
+    const sections: string[] = []
+    sections.push(buildAiFeedbackSummary(result, personaLabel, scenarioLabel))
+
+    // 取当前评估的人工反馈（如果有）
+    const targetEval = viewingEval || currentPersona.evaluations[0]
+    const hf = targetEval?.humanFeedback
+    if (hf && (hf.dimensionOverrides.length || hf.overallComment?.trim())) {
+      const lines: string[] = []
+      lines.push(`【反馈来源】人工反馈（人格：${personaLabel}）`)
+      if (hf.dimensionOverrides.length) {
+        lines.push('【人工覆盖】')
+        hf.dimensionOverrides.forEach((d) =>
+          lines.push(`- ${d.name}：人工=${d.humanRating}；理由：${d.reason || '（未填）'}`)
+        )
+      }
+      if (hf.overallComment?.trim()) lines.push(`【总体备注】${hf.overallComment.trim()}`)
+      sections.push(lines.join('\n'))
+    }
+
+    setGenRulesUpdating(true)
+    try {
+      const newRule = await extractOneRule(
+        config,
+        genRules,
+        sections.join('\n\n')
+      )
+      if (!newRule) {
+        alert('本次反馈未提炼出新规则（与现有规则重复或无新代价）。')
+      } else {
+        setGenRules((prev) => [...prev, newRule])
+        setRecordedFlash(true)
+        setTimeout(() => setRecordedFlash(false), 2000)
+      }
+    } catch (e: any) {
+      alert('记录失败：' + (e?.message || e))
+    } finally {
+      setGenRulesUpdating(false)
+    }
+  }
+
+  // 提交人工反馈 → 更新评判标准（不再自动累积生成规则，改为手动点击「记录」按钮）
+  const handleSubmitFeedback = async (feedback: HumanFeedbackInput): Promise<void> => {
+    if (!currentPersona) return
+    // 1. 调 AI 更新 judgingCriteria
+    const newCriteria = await updateJudgingCriteria(
+      config,
+      currentPersona.judgingCriteria || '',
+      feedback
+    )
+    // 2. 保存 humanFeedback 到最新的 evaluation
+    const humanFb: HumanFeedback = {
+      dimensionOverrides: feedback.dimensionOverrides.map((d) => ({
+        name: d.name,
+        humanRating: d.humanRating,
+        reason: d.reason,
+      })),
+      overallComment: feedback.overallComment,
+      createdAt: Date.now(),
+    }
+    // 3. 更新 persona（criteria + evaluation feedback）
+    setPersonas((list) =>
+      list.map((p) => {
+        if (p.id !== currentPersona.id) return p
+        const evals = [...p.evaluations]
+        // 给最新那条（或正在查看的那条）加 humanFeedback
+        const targetId = viewingEval?.id || evals[0]?.id
+        const idx = evals.findIndex((e) => e.id === targetId)
+        if (idx >= 0) evals[idx] = { ...evals[idx], humanFeedback: humanFb }
+        return { ...p, judgingCriteria: newCriteria, evaluations: evals, updatedAt: Date.now() }
+      })
+    )
   }
 
   return (
@@ -435,6 +566,11 @@ function App() {
                 result={result}
                 viewingEval={viewingEval}
                 onUseOptimized={(p) => updateCurrentPrompt(p)}
+                onSubmitFeedback={handleSubmitFeedback}
+                onShowCriteria={() => setShowCriteriaModal(true)}
+                onRecordToRules={handleRecordToRules}
+                recording={genRulesUpdating}
+                recordedFlash={recordedFlash}
               />
             )}
           </section>
@@ -444,6 +580,10 @@ function App() {
       {showPersonaModal && (
         <PersonaModal
           editing={editingPersona}
+          config={config}
+          extraGenRules={genRules}
+          genRulesUpdating={genRulesUpdating}
+          onShowGenRules={() => setShowGenRulesModal(true)}
           onSave={handleSavePersona}
           onCancel={() => {
             setShowPersonaModal(false)
@@ -459,6 +599,34 @@ function App() {
           onChangeProvider={handleProviderChange}
           onChangeConfig={setConfig}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showCriteriaModal && (
+        <CriteriaModal
+          defaultCriteria={EVALUATION_SYSTEM_PROMPT}
+          customCriteria={currentPersona?.judgingCriteria || ''}
+          onClose={() => setShowCriteriaModal(false)}
+        />
+      )}
+
+      {showGenRulesModal && (
+        <GenRulesModal
+          rules={genRules}
+          updating={genRulesUpdating}
+          onUpdate={(idx, text) => {
+            const t = text.trim()
+            if (!t) {
+              setGenRules((prev) => prev.filter((_, i) => i !== idx))
+            } else {
+              setGenRules((prev) => prev.map((r, i) => (i === idx ? t : r)))
+            }
+          }}
+          onDelete={(idx) => setGenRules((prev) => prev.filter((_, i) => i !== idx))}
+          onClear={() => {
+            if (confirm('确定清空所有累积的生成人格额外规则？清空后不可恢复。')) setGenRules([])
+          }}
+          onClose={() => setShowGenRulesModal(false)}
         />
       )}
     </div>
@@ -516,19 +684,47 @@ function PersonaBar({
 // ========== Persona Modal ==========
 function PersonaModal({
   editing,
+  config,
+  extraGenRules,
+  genRulesUpdating,
+  onShowGenRules,
   onSave,
   onCancel,
 }: {
   editing: Persona | null
+  config: LLMConfig
+  extraGenRules: string[]
+  genRulesUpdating: boolean
+  onShowGenRules: () => void
   onSave: (name: string, prompt: string) => void
   onCancel: () => void
 }) {
   const [name, setName] = useState(editing?.name || '')
   const [prompt, setPrompt] = useState(editing?.prompt || '')
+  const [styleHint, setStyleHint] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [genError, setGenError] = useState('')
+
+  const handleGenerate = async () => {
+    if (!config.apiKey) {
+      setGenError('请先在「⚙️ 设置」中配置 API Key')
+      return
+    }
+    setGenError('')
+    setGenerating(true)
+    try {
+      const generated = await generatePersonaPrompt(config, name.trim(), styleHint.trim(), extraGenRules)
+      setPrompt(generated)
+    } catch (e: any) {
+      setGenError(e?.message || '生成失败')
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   return (
     <div className="modal-mask" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal persona-modal" onClick={(e) => e.stopPropagation()}>
         <h3>{editing ? '编辑人格任务' : '新建人格任务'}</h3>
         <div className="modal-row">
           <label>人格名称</label>
@@ -541,13 +737,38 @@ function PersonaModal({
           />
         </div>
         <div className="modal-row">
-          <label>人格 Prompt</label>
+          <label>风格描述（可选，用于 AI 生成）</label>
+          <input
+            type="text"
+            value={styleHint}
+            onChange={(e) => setStyleHint(e.target.value)}
+            placeholder="例如：冷淡精炼 / 温柔治愈系 / 酷盖少年语气"
+          />
+        </div>
+        <div className="modal-row">
+          <div className="label-row">
+            <label>人格 Prompt</label>
+            <button
+              className="btn-primary-sm"
+              onClick={handleGenerate}
+              disabled={generating}
+              type="button"
+            >
+              {generating ? '生成中...' : '✨ 生成人格 Prompt'}
+            </button>
+          </div>
+          <div className="gen-rules-tip">
+            已累积 <b>{extraGenRules.length}</b> 条「生成额外规则」
+            {genRulesUpdating && <span className="updating-tag">更新中...</span>}
+            <button type="button" className="btn-link" onClick={onShowGenRules}>查看/管理</button>
+          </div>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="贴入这个人格的完整 system prompt..."
-            rows={12}
+            placeholder="贴入这个人格的完整 system prompt，或点击上方按钮由 AI 自动生成..."
+            rows={14}
           />
+          {genError && <div className="gen-error">⚠️ {genError}</div>}
         </div>
         <div className="modal-actions">
           <button className="btn-ghost" onClick={onCancel}>
@@ -717,13 +938,36 @@ function ResultPanel({
   result,
   viewingEval,
   onUseOptimized,
+  onSubmitFeedback,
+  onShowCriteria,
+  onRecordToRules,
+  recording,
+  recordedFlash,
 }: {
   result: EvaluationResult
   viewingEval: Evaluation | null
   onUseOptimized: (p: string) => void
+  onSubmitFeedback: (feedback: HumanFeedbackInput) => Promise<void>
+  onShowCriteria: () => void
+  onRecordToRules: () => Promise<void>
+  recording: boolean
+  recordedFlash: boolean
 }) {
   return (
     <div className="result">
+      <div className="result-toolbar">
+        <button
+          className={`btn-ghost ${recordedFlash ? 'recorded' : ''}`}
+          onClick={onRecordToRules}
+          disabled={recording}
+          title="手动把本次评估中的问题与改进点记录到『生成人格 Prompt 额外规则』中"
+        >
+          {recording ? '记录中...' : recordedFlash ? '✅ 已记录' : '📥 记录到生成规则'}
+        </button>
+        <button className="btn-ghost" onClick={onShowCriteria}>
+          📐 查看评判标准
+        </button>
+      </div>
       {viewingEval && (
         <div className="viewing-banner">
           📜 正在查看历史记录 · {viewingEval.scenarioName} ·{' '}
@@ -782,37 +1026,15 @@ function ResultPanel({
         </table>
       </div>
 
-      {result.coreIssues.length > 0 && (
-        <div className="card">
-          <h3>🔍 核心问题</h3>
-          <ol className="num-list">
-            {result.coreIssues.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ol>
-        </div>
-      )}
-
-      {result.suggestions.length > 0 && (
-        <div className="card">
-          <h3>💡 改进建议</h3>
-          <ol className="num-list">
-            {result.suggestions.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ol>
-        </div>
-      )}
-
       <div className="card highlight">
         <div className="card-head">
-          <h3>🔧 优化后的 Prompt</h3>
+          <h3>🔧 分析与优化</h3>
           <div className="actions">
             <button
               className="btn-ghost-sm"
               onClick={() => navigator.clipboard.writeText(result.optimizedPrompt)}
             >
-              复制
+              复制 Prompt
             </button>
             <button
               className="btn-primary-sm"
@@ -822,23 +1044,39 @@ function ResultPanel({
             </button>
           </div>
         </div>
-        {result.changeSummary && (
-          <div className="change-summary">
-            <span className="change-summary-label">变更总览：</span>
-            <span>{result.changeSummary}</span>
-          </div>
-        )}
-        <pre className="optimized">{result.optimizedPrompt}</pre>
-        {result.changeLog.length > 0 && (
-          <>
-            <div className="sub-title">变更说明</div>
+
+        {result.coreIssues.length > 0 && (
+          <div className="analysis-section">
+            <div className="sub-title">🔍 核心问题</div>
             <ol className="num-list">
-              {result.changeLog.map((c, i) => (
-                <li key={i}>{c}</li>
+              {result.coreIssues.map((s, i) => (
+                <li key={i}>{s}</li>
               ))}
             </ol>
-          </>
+          </div>
         )}
+
+        {result.suggestions.length > 0 && (
+          <div className="analysis-section">
+            <div className="sub-title">💡 改进建议</div>
+            <ol className="num-list">
+              {result.suggestions.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        <div className="analysis-section">
+          <div className="sub-title">🔧 优化后的 Prompt</div>
+          {result.changeSummary && (
+            <div className="change-summary">
+              <span className="change-summary-label">变更总览：</span>
+              <span>{result.changeSummary}</span>
+            </div>
+          )}
+          <pre className="optimized">{result.optimizedPrompt}</pre>
+        </div>
       </div>
 
       {result.samplePreview && (
@@ -847,6 +1085,265 @@ function ResultPanel({
           <div className="preview">{result.samplePreview}</div>
         </div>
       )}
+
+      {/* 人工反馈面板 */}
+      <FeedbackPanel
+        dimensions={result.dimensions}
+        onSubmit={onSubmitFeedback}
+        existingFeedback={viewingEval?.humanFeedback}
+      />
+    </div>
+  )
+}
+
+// ========== Feedback Panel ==========
+type RatingType = '✅' | '⚠️' | '❌'
+const RATING_OPTIONS: RatingType[] = ['✅', '⚠️', '❌']
+
+function FeedbackPanel({
+  dimensions,
+  onSubmit,
+  existingFeedback,
+}: {
+  dimensions: EvaluationResult['dimensions']
+  onSubmit: (feedback: HumanFeedbackInput) => Promise<void>
+  existingFeedback?: HumanFeedback
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [overrides, setOverrides] = useState<Array<{ name: string; humanRating: RatingType; reason: string }>>(
+    dimensions.map((d) => ({ name: d.name, humanRating: d.rating as RatingType, reason: '' }))
+  )
+  const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [success, setSuccess] = useState(false)
+  const [feedbackError, setFeedbackError] = useState('')
+
+  // 如果已有反馈，显示已提交状态
+  if (existingFeedback && !expanded) {
+    return (
+      <div className="card feedback-panel">
+        <div className="card-head">
+          <h3>✅ 已提交人工反馈</h3>
+          <button className="btn-ghost-sm" onClick={() => setExpanded(true)}>查看/重新提交</button>
+        </div>
+        <div className="criteria-empty">反馈已经融入到评判准则中 ({formatTime(existingFeedback.createdAt)})</div>
+      </div>
+    )
+  }
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    setFeedbackError('')
+    setSuccess(false)
+    try {
+      await onSubmit({
+        dimensionOverrides: overrides.map((o, i) => ({
+          name: o.name,
+          aiRating: dimensions[i].rating as RatingType,
+          humanRating: o.humanRating,
+          reason: o.reason,
+        })),
+        overallComment: comment,
+      })
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 3000)
+    } catch (e: any) {
+      setFeedbackError(e.message || String(e))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="card feedback-panel">
+      <div className="card-head">
+        <h3>✍️ 人工评判</h3>
+        {!expanded && <button className="btn-ghost-sm" onClick={() => setExpanded(true)}>展开</button>}
+        {expanded && <button className="btn-ghost-sm" onClick={() => setExpanded(false)}>收起</button>}
+      </div>
+      {!expanded && <div className="criteria-empty">不同意 AI 的评分？提交反馈可以让评判标准自动进化</div>}
+      {expanded && (
+        <div className="feedback-body">
+          <div className="feedback-dimensions">
+            {dimensions.map((d, i) => (
+              <div className="feedback-dimension-row" key={d.name}>
+                <span className="feedback-dim-name">{d.name}</span>
+                <span className="feedback-ai-rating">AI: {d.rating}</span>
+                <span className="feedback-arrow">→</span>
+                <span className="feedback-human-rating">
+                  {RATING_OPTIONS.map((r) => (
+                    <button
+                      key={r}
+                      className={`rating-toggle ${overrides[i]?.humanRating === r ? 'active' : ''}`}
+                      onClick={() =>
+                        setOverrides((prev) => prev.map((o, idx) => (idx === i ? { ...o, humanRating: r } : o)))
+                      }
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </span>
+                <input
+                  className="feedback-reason"
+                  placeholder="理由（可选）"
+                  value={overrides[i]?.reason || ''}
+                  onChange={(e) =>
+                    setOverrides((prev) => prev.map((o, idx) => (idx === i ? { ...o, reason: e.target.value } : o)))
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          <textarea
+            className="feedback-comment"
+            placeholder="整体意见：你觉得 AI 哪里评得不对，你的标准是什么？"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <div className="feedback-actions">
+            <button className="btn-primary" onClick={handleSubmit} disabled={submitting}>
+              {submitting ? '⛳ 更新中...' : '提交反馈 & 更新评判标准'}
+            </button>
+            {success && <span className="feedback-success">✅ 评判标准已更新！</span>}
+            {feedbackError && <span className="feedback-error">⚠️ {feedbackError}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ========== Criteria Modal ==========
+function CriteriaModal({
+  defaultCriteria,
+  customCriteria,
+  onClose,
+}: {
+  defaultCriteria: string
+  customCriteria: string
+  onClose: () => void
+}) {
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal criteria-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>📐 当前评判标准</h3>
+        <div className="criteria-modal-body">
+          <section className="criteria-section">
+            <h4>📦 默认评估标准（系统内置）</h4>
+            <pre className="criteria-pre">{defaultCriteria}</pre>
+          </section>
+          {customCriteria && (
+            <section className="criteria-section custom">
+              <h4>🎯 自定义评判准则（由人工反馈迭代生成）</h4>
+              <pre className="criteria-pre custom-criteria-pre">{customCriteria}</pre>
+            </section>
+          )}
+          {!customCriteria && (
+            <section className="criteria-section">
+              <h4>🎯 自定义评判准则</h4>
+              <div className="criteria-empty">尚未建立。完成评估后在“人工评判”面板提交反馈，即可自动生成。</div>
+            </section>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn-ghost" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ========== Gen Rules Modal ==========
+function GenRulesModal({
+  rules,
+  updating,
+  onUpdate,
+  onDelete,
+  onClear,
+  onClose,
+}: {
+  rules: string[]
+  updating: boolean
+  onUpdate: (idx: number, text: string) => void
+  onDelete: (idx: number) => void
+  onClear: () => void
+  onClose: () => void
+}) {
+  const [editingIdx, setEditingIdx] = useState<number>(-1)
+  const [draft, setDraft] = useState('')
+
+  const startEdit = (idx: number) => {
+    setEditingIdx(idx)
+    setDraft(rules[idx])
+  }
+  const saveEdit = () => {
+    if (editingIdx < 0) return
+    onUpdate(editingIdx, draft)
+    setEditingIdx(-1)
+    setDraft('')
+  }
+  const cancelEdit = () => {
+    setEditingIdx(-1)
+    setDraft('')
+  }
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal criteria-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>
+          生成人格 Prompt 额外规则 <span className="rule-count">({rules.length})</span>
+          {updating && <span className="updating-tag">更新中...</span>}
+        </h3>
+        <div className="criteria-body">
+          <div className="criteria-empty" style={{ marginBottom: 12 }}>
+            仅在你点「📥 记录到生成规则」后追加。下次生成人格 Prompt 时会叠加遵守；原《人格提示词写作规范》不会被修改。
+          </div>
+          {rules.length === 0 ? (
+            <div className="criteria-empty">尚未累积。评估后点「记录到生成规则」即可追加。</div>
+          ) : (
+            <ol className="rule-list">
+              {rules.map((r, idx) => (
+                <li key={idx} className="rule-item">
+                  {editingIdx === idx ? (
+                    <>
+                      <textarea
+                        className="rule-edit-input"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        rows={2}
+                        autoFocus
+                      />
+                      <div className="rule-actions">
+                        <button className="btn-primary-sm" onClick={saveEdit}>保存</button>
+                        <button className="btn-ghost-sm" onClick={cancelEdit}>取消</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="rule-text">{r}</div>
+                      <div className="rule-actions">
+                        <button className="btn-ghost-sm" onClick={() => startEdit(idx)}>✏️ 编辑</button>
+                        <button
+                          className="btn-ghost-sm danger"
+                          onClick={() => {
+                            if (confirm(`删除这条规则？\n\n${r}`)) onDelete(idx)
+                          }}
+                        >
+                          🗑️ 删除
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn-ghost" onClick={onClear} disabled={!rules.length}>清空全部</button>
+          <button className="btn-primary" onClick={onClose}>关闭</button>
+        </div>
+      </div>
     </div>
   )
 }

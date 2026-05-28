@@ -1,6 +1,16 @@
 // 人格任务存储：localStorage 持久化
 import type { EvaluationResult } from './api'
 
+export type HumanFeedback = {
+  dimensionOverrides: Array<{
+    name: string
+    humanRating: '✅' | '⚠️' | '❌'
+    reason: string
+  }>
+  overallComment: string
+  createdAt: number
+}
+
 export type Evaluation = {
   id: string
   scenarioId: string // 预设场景 id；自定义场景为空
@@ -9,6 +19,7 @@ export type Evaluation = {
   modelOutput: string
   extraNotes: string
   result: EvaluationResult
+  humanFeedback?: HumanFeedback
   createdAt: number
 }
 
@@ -16,6 +27,7 @@ export type Persona = {
   id: string
   name: string
   prompt: string
+  judgingCriteria: string // AI 根据历史反馈生成的评判准则
   createdAt: number
   updatedAt: number
   evaluations: Evaluation[]
@@ -23,6 +35,7 @@ export type Persona = {
 
 const STORAGE_KEY = 'prompt-tester-personas-v1'
 const CURRENT_KEY = 'prompt-tester-current-persona'
+const GEN_RULES_KEY = 'prompt-tester-gen-rules-v1'
 
 export function loadPersonas(): Persona[] {
   try {
@@ -45,6 +58,27 @@ export function loadCurrentPersonaId(): string {
 export function saveCurrentPersonaId(id: string) {
   if (id) localStorage.setItem(CURRENT_KEY, id)
   else localStorage.removeItem(CURRENT_KEY)
+}
+
+// 全局累积的「生成人格 Prompt 额外规则」，按条存储，可独立编辑/删除
+export function loadGenRules(): string[] {
+  const raw = localStorage.getItem(GEN_RULES_KEY)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed.filter((s) => typeof s === 'string' && s.trim())
+    // 旧版纯文本兼容：整块作为一条
+    if (typeof parsed === 'string' && parsed.trim()) return [parsed.trim()]
+  } catch {
+    // 旧版不是 JSON，直接当作一整块
+    if (raw.trim()) return [raw.trim()]
+  }
+  return []
+}
+
+export function saveGenRules(rules: string[]) {
+  if (rules && rules.length) localStorage.setItem(GEN_RULES_KEY, JSON.stringify(rules))
+  else localStorage.removeItem(GEN_RULES_KEY)
 }
 
 export function genId(): string {

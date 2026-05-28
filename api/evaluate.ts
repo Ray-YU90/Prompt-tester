@@ -39,8 +39,8 @@ export default async function handler(req: Request): Promise<Response> {
       body: JSON.stringify({
         model,
         messages: body.messages,
-        temperature: 0.3,
-        response_format: { type: 'json_object' },
+        temperature: body.temperature ?? 0.3,
+        ...(body.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
       }),
     })
 
